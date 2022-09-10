@@ -1,0 +1,263 @@
+---
+title: "Sentiment Analysis Graphs"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+Libraries
+```{r}
+library(readtext) #Needed for readtext
+library(tidyverse) #I use tidy format
+library(tidytext) #unnest
+library(tm) #clean
+```
+
+Import / unnest / clean
+```{r}
+w_df <- readtext("white", cache=FALSE) %>% mutate(race="White")
+b_df <- readtext("black", cache=FALSE) %>% mutate(race="Black")
+novels <- bind_rows(w_df, b_df) %>% 
+  mutate(text = str_to_lower(text)) %>%
+  mutate(text = str_squish(text)) %>%
+  mutate(text = removeNumbers(text)) %>%
+  unnest_tokens(output = "word", input = "text") 
+#remove stop words
+novels <- anti_join(novels, stop_words, by = c("word" = "word"), .keep_all = true)
+#remove .txt
+novels$doc_id<-gsub(".txt", "", paste(novels$doc_id))
+#wordcount
+novels_wordcount <- novels %>%
+  group_by(doc_id) %>%
+  mutate(id = row_number()) %>%
+  ungroup()
+```
+
+Creating data frame for each novel
+```{r}
+hold <- novels_wordcount %>% 
+  filter(doc_id=="72 Hour Hold")%>%
+  mutate(id = row_number())
+
+unlimited <- novels_wordcount %>% 
+  filter(doc_id=="Black Girl Unlimited")%>%
+  mutate(id = row_number())
+
+charm <- novels_wordcount %>% 
+  filter(doc_id=="Charm & Strange")%>%
+  mutate(id = row_number())
+
+home <- novels_wordcount %>% 
+  filter(doc_id=="Home Home")%>%
+  mutate(id = row_number())
+
+little <- novels_wordcount %>% 
+  filter(doc_id=="Little & Lion")%>%
+  mutate(id = row_number())
+
+now <- novels_wordcount %>% 
+  filter(doc_id=="Some Other Now")%>%
+  mutate(id = row_number())
+
+beauty <- novels_wordcount %>% 
+  filter(doc_id=="The Beauty That Remains")%>%
+  mutate(id = row_number())
+
+knowing <- novels_wordcount %>% 
+  filter(doc_id=="The Cost of Knowing")%>%
+  mutate(id = row_number())
+
+stars <- novels_wordcount %>% 
+  filter(doc_id=="When the Stars Lead to You")%>%
+  mutate(id = row_number())
+
+song <- novels_wordcount %>% 
+  filter(doc_id=="Who Put This Song On")%>%
+  mutate(id = row_number())
+
+reasons <- novels_wordcount %>% 
+  filter(doc_id=="13 Reasons Why") %>%
+  mutate(id = row_number())
+
+danger <- novels_wordcount %>% 
+  filter(doc_id=="A Danger to Herself and Others") %>%
+  mutate(id = row_number())
+
+bright <- novels_wordcount %>% 
+  filter(doc_id=="All the Bright Places") %>%
+  mutate(id = row_number())
+
+lemmings <- novels_wordcount %>% 
+  filter(doc_id=="Are We All Lemmings and Snowflakes") %>%
+  mutate(id = row_number())
+
+eleanor <- novels_wordcount %>% 
+  filter(doc_id=="Eleanor Oliphant is Completely Fine") %>%
+  mutate(id = row_number())
+
+eliza <- novels_wordcount %>% 
+  filter(doc_id=="Eliza and Her Monsters") %>%
+  mutate(id = row_number())
+
+every <- novels_wordcount %>% 
+  filter(doc_id=="Every Last Word")%>%
+  mutate(id = row_number())
+
+everyone <- novels_wordcount %>% 
+  filter(doc_id=="Everyone in This Room Will Someday be Dead") %>%
+  mutate(id = row_number())
+
+fan <- novels_wordcount %>% 
+  filter(doc_id=="Fangirl")%>%
+  mutate(id = row_number())
+
+forgive <- novels_wordcount %>% 
+  filter(doc_id=="Forgive Me, Leonard Peacock") %>%
+  mutate(id = row_number())
+
+pieces <- novels_wordcount %>% 
+  filter(doc_id=="Girl in Pieces")%>%
+  mutate(id = row_number())
+
+float <- novels_wordcount %>% 
+  filter(doc_id=="How it Feels to Float") %>%
+  mutate(id = row_number())
+
+gone <- novels_wordcount %>% 
+  filter(doc_id=="Imagine Me Gone") %>%
+  mutate(id = row_number())
+
+story <- novels_wordcount %>% 
+  filter(doc_id=="It's Kind of a Funny Story")%>%
+  mutate(id = row_number())
+
+made <- novels_wordcount %>% 
+  filter(doc_id=="Made You Up") %>%
+  mutate(id = row_number())
+
+normal <- novels_wordcount %>% 
+  filter(doc_id=="Normal People") %>%
+  mutate(id = row_number())
+
+schizo <- novels_wordcount %>% 
+  filter(doc_id=="Schizo") %>%
+  mutate(id = row_number())
+
+sorrow <- novels_wordcount %>% 
+  filter(doc_id=="Sorrow and Bliss") %>%
+  mutate(id = row_number())
+
+suicide <- novels_wordcount %>% 
+  filter(doc_id=="Suicide Notes") %>%
+  mutate(id = row_number())
+
+symptoms <- novels_wordcount %>% 
+  filter(doc_id=="Symptoms of Being Human")%>%
+  mutate(id = row_number())
+
+boy <- novels_wordcount %>% 
+  filter(doc_id=="The Boy Who Steals Houses") %>%
+  mutate(id = row_number())
+
+molly <- novels_wordcount %>% 
+  filter(doc_id=="The Half Life of Molly Pierce") %>%
+  mutate(id = row_number())
+
+lightness <- novels_wordcount %>% 
+  filter(doc_id=="The Lightness of Hands") %>%
+  mutate(id = row_number())
+
+library <- novels_wordcount %>% 
+  filter(doc_id=="The Midnight Library") %>%
+  mutate(id = row_number())
+
+silver <- novels_wordcount %>% 
+  filter(doc_id=="The Silver Linings Playbook") %>%
+  mutate(id = row_number())
+
+eat <- novels_wordcount %>% 
+  filter(doc_id=="The Year I Didn't Eat") %>%
+  mutate(id = row_number())
+
+lie <- novels_wordcount %>% 
+  filter(doc_id=="This Story is a Lie") %>%
+  mutate(id = row_number())
+
+turtles <- novels_wordcount %>% 
+  filter(doc_id=="Turtles All the Way Down")%>%
+  mutate(id = row_number())
+
+ants <- novels_wordcount %>% 
+  filter(doc_id=="We Are the Ants")%>%
+  mutate(id = row_number())
+
+elephants <- novels_wordcount %>% 
+  filter(doc_id=="When Elephants Fly") %>%
+  mutate(id = row_number())
+
+winter <- novels_wordcount %>% 
+  filter(doc_id=="Wintergirls") %>%
+  mutate(id = row_number())
+
+novels <- list(hold, unlimited, charm, home, little, now, beauty, knowing, stars, song, reasons, danger, bright, lemmings, eleanor, eliza, every, everyone, fan, forgive, pieces, float, gone, story, made, normal, schizo, sorrow, suicide, symptoms, boy, molly, lightness, library, silver, eat, lie, turtles, ants, elephants, winter)
+```
+
+Sent Analysis Function - sans nrc
+```{r}
+sent_analysis <- function(data_set) {
+  afinn <- data_set %>% group_by(word) %>% 
+  inner_join(get_sentiments("afinn")) %>% 
+ group_by(doc_id, index = id %/% 500) %>% 
+ summarise(sentiment = sum(value)) %>% 
+ mutate(method = "AFINN")
+  
+  bing <- data_set %>% 
+    inner_join(get_sentiments("bing")) %>%
+    mutate(method = "Bing et al.") %>%
+  count(method, index = id %/% 500, sentiment) %>%
+  spread(sentiment, n, fill = 0) %>%
+  mutate(sentiment = positive - negative)
+  
+  bind_rows(afinn, bing) %>%
+  ggplot(aes(index, sentiment, fill = method)) +
+  labs(title=data_set$doc_id, subtitle=data_set$race) +
+  geom_col(show.legend = FALSE) +
+  facet_wrap(~method, ncol = 1, scales = "free_y")
+}
+map(novels, sent_analysis) 
+```
+
+With nrc
+```{r}
+sent_analysis_nrc <- function(data_set) {
+  afinn <- data_set %>% group_by(word) %>% 
+  inner_join(get_sentiments("afinn")) %>% 
+ group_by(doc_id, index = id %/% 500) %>% 
+ summarise(sentiment = sum(value)) %>% 
+ mutate(method = "AFINN")
+  
+  bing_nrc <- bind_rows(
+  data_set %>% 
+    inner_join(get_sentiments("bing")) %>%
+    mutate(method = "Bing et al."),
+  data_set %>% 
+    inner_join(get_sentiments("nrc") %>% 
+                 filter(sentiment %in% c("positive", 
+                                         "negative"))
+    ) %>%
+    mutate(method = "NRC")) %>%
+  count(method, index = id %/% 500, sentiment) %>%
+  spread(sentiment, n, fill = 0) %>%
+  mutate(sentiment = positive - negative)
+  
+  bind_rows(afinn, bing_nrc) %>%
+  ggplot(aes(index, sentiment, fill = method)) +
+  labs(title=data_set$doc_id, subtitle=data_set$race) +
+  geom_col(show.legend = FALSE) +
+  facet_wrap(~method, ncol = 1, scales = "free_y")
+}
+map(novels, sent_analysis_nrc) 
+```
+

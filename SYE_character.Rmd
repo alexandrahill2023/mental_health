@@ -1,0 +1,322 @@
+---
+title: "SYE"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+DATA PREP
+
+libraries
+```{r}
+library(readtext) #Needed for readtext
+library(tidyverse)
+library(tidytext) #unnest
+library(topicmodels)
+library(knitr) #tables
+library(tm) #clean
+```
+
+Import / unnest / clean
+```{r}
+#white male 
+#read
+wm_df <- readtext("white_male_char", cache=FALSE)
+#still nested for +-10
+wm_nest <- wm_df %>%
+  mutate(text = str_to_lower(text)) %>% 
+  mutate(positionality = "white male") %>%
+  mutate(text = str_squish(text)) %>%
+  mutate(text = removeNumbers(text))
+#unnest
+wm_unnest <- wm_nest %>% 
+  unnest_tokens(output = "word", input = "text")
+#remove stop words
+wm <- anti_join(wm_unnest, stop_words, by = c("word" = "word"), .keep_all = true)
+#remove .txt
+wm$doc_id<-gsub(".txt", "", paste(wm$doc_id))
+
+#white female 
+#read
+wf_df <- readtext("white_fem_char)", cache=FALSE)
+#still nested for +-10
+wf_nest <- wf_df %>%
+  mutate(text = str_to_lower(text)) %>% 
+  mutate(positionality = "white fem") %>%
+  mutate(text = str_squish(text)) %>%
+  mutate(text = removeNumbers(text))
+#unnest
+wf_unnest <- wf_nest %>% 
+  unnest_tokens(output = "word", input = "text")
+#remove stop words
+wf <- anti_join(wf_unnest, stop_words, by = c("word" = "word"), .keep_all = true)
+#remove .txt
+wf$doc_id<-gsub(".txt", "", paste(wf$doc_id))
+
+#black male 
+#read
+bm_df <- readtext("black_male_char", cache=FALSE)
+#still nested for +-10
+bm_nest <- bm_df %>%
+  mutate(text = str_to_lower(text)) %>% 
+  mutate(positionality = "black male") %>%
+  mutate(text = str_squish(text)) %>%
+  mutate(text = removeNumbers(text))
+#unnest
+bm_unnest <- bm_nest %>% 
+  unnest_tokens(output = "word", input = "text")
+#remove stop words
+bm <- anti_join(bm_unnest, stop_words, by = c("word" = "word"), .keep_all = true)
+#remove .txt
+bm$doc_id<-gsub(".txt", "", paste(bm$doc_id))
+
+#black female 
+#read
+bf_df <- readtext("black_fem_char", cache=FALSE)
+#still nested for +-10
+bf_nest <- bf_df %>%
+  mutate(text = str_to_lower(text)) %>% 
+  mutate(positionality = "black fem") %>%
+  mutate(text = str_squish(text)) %>%
+  mutate(text = removeNumbers(text))
+#unnest
+bf_unnest <- bf_nest %>% 
+  unnest_tokens(output = "word", input = "text")
+#remove stop words
+bf <- anti_join(bf_unnest, stop_words, by = c("word" = "word"), .keep_all = true)
+#remove .txt
+bf$doc_id<-gsub(".txt", "", paste(bf$doc_id))
+
+#remove unneeded
+rm(wm_df, wm_unnest, wf_df, wf_unnest, bm_df, bm_unnest, bf_df, bf_unnest)
+
+#all novels together
+all_novels <- bind_rows(wm, wf, bm, bf)
+novel_list <- list(wm, wf, bm, bf)
+novels_nest <- bind_rows(wm_nest, wf_nest, bm_nest, bf_nest,)
+#wordcount
+all_novels_wordcount <- all_novels %>%
+  group_by(doc_id) %>%
+  mutate(id = row_number()) %>%
+  mutate(tot_words = n()) %>%
+  ungroup()
+```
+
+ANALYSIS
+
+wordcount_check
+```{r}
+all_novels_wordcount_check <- all_novels %>%
+  group_by(doc_id) %>%
+  summarize(tot_words = n()) %>%
+  arrange(desc(tot_words))
+all_novels_wordcount_check %>% kable()
+
+all_novels_wordcount_check %>%
+  ggplot(aes(tot_words, doc_id)) +
+  geom_col()
+```
+
+Boxplot one sentiment per book
+```{r}
+#afinn
+afinn_sent_per <- all_novels %>% 
+   inner_join(get_sentiments("afinn")) %>% 
+   group_by(doc_id, positionality) %>% 
+   summarise(sentiment = sum(value)) %>% 
+   mutate(method = "AFINN")
+#bing and nrc
+bing_and_nrc_sent_per <- bind_rows(
+  all_novels %>% 
+    inner_join(get_sentiments("bing")) %>%
+    mutate(method = "Bing et al."),
+  all_novels %>% 
+    inner_join(get_sentiments("nrc") %>% 
+                 filter(sentiment %in% c("positive", 
+                                         "negative"))
+    ) %>%
+    mutate(method = "NRC")) %>%
+  count(method, doc_id, sentiment, positionality) %>%
+  spread(sentiment, n, fill = 0) %>%
+  mutate(sentiment = positive - negative)
+
+#Boxplot
+single_sent_box <- bind_rows(afinn_sent_per, bing_and_nrc_sent_per)
+
+ggplot(data = single_sent_box, aes(x = positionality, y = sentiment)) +
+  geom_boxplot() +
+  facet_wrap(~ method)
+```
+
+Most common words
+```{r}
+#table loop
+top_10_words <- function(data_set) {
+  data_set %>% group_by(word) %>%
+    summarise(n = n()) %>%
+    arrange(desc(n)) %>%
+  print(n = 10)
+}
+map(novel_list, top_10_words)
+
+#graph loop
+top_10_words_graph <- function(data_set) {
+  data_set %>% group_by(word) %>%
+    summarise(n = n()) %>%
+    ungroup() %>%
+  slice_max(n, n=10) %>%
+  mutate(word = fct_reorder(.f = word, .x = n)) %>% 
+  ggplot(aes(n, word)) +
+  geom_col()
+}
+map(novel_list, top_10_words_graph) #problem - not in order
+```
+
+MENTAL HEALTH
+```{r}
+MH <- tibble(word=c("insane", "lobotomy", "hysteria", "electroshock therapy", "lunatic", "psychotic", "nuts", "crazy", "deranged", "demented", "asylum", "loony", "retarded", "retard", "freak", "madness", "hydrotherapy", "delirious", "sociopath", "sociopathic", "disturbed", "psycho", "mad", "weird", "retard", "spastic", "screw loose", "attention seeker", "attention seeking", "halfwit", "meltdown", "outcast", "nutty", "kill yourself", "kill myself", "kill herself", "kill himself", "perverted", "spaz", "strange", "twisted", "weirdo", "psychopath", "psychopathic", "institutionalized", "therapy", "therapist", "psychiatrist", "medication", "suicidal", "suicide", "mentally ill", "mental illness", "mental health", "diagnosis", "depression", "depressed", "anxiety", "anxieties", "psychosis", "dissociate", "dissociation", "intrusive thoughts", "thought spiral", "sleep paralysis", "multiple personality disorder", "dissociative identity disorder", "bipolar", "bpd", "borderline personality", "schizophrenia", "schizophrenic", "ptsd", "dsm iv", "dsm 5", "eating disorder", "anorexia", "bulimia", "binge eating disorder", "manic", "autism", "hallucinations", "hallucination", "intrusive thought", "ocd", "psychoanalysis", "trigger", "panic attack", "coping mechanism", "compulsion", "antisocial personality disorder",  "self harm", "straitjacket", "mental hospital", "mental institution", "depersonalization", "obsessive compulsive", "psychiatry", "delirium", "mania", "melancholia", "monomania", "post traumatic stress" ))
+
+neg_mh <- tibble(word=c("insane", "lobotomy", "hysteria", "electroshock therapy", "lunatic", "psychotic", "nuts", "crazy", "deranged", "demented", "asylum", "loony", "retarded", "retard", "freak", "madness", "hydrotherapy", "delirious", "sociopath", "sociopathic", "disturbed", "psycho", "mad", "weird", "retard", "spastic", "screw loose", "attention seeker", "attention seeking", "halfwit", "meltdown", "outcast", "nutty", "kill yourself", "kill myself", "kill herself", "kill himself", "perverted", "spaz", "strange", "twisted", "weirdo", "psychopath", "psychopathic"))
+
+pos_mh <- tibble(word=c("institutionalized", "therapy", "therapist", "psychiatrist", "medication", "suicidal", "suicide", "mentally ill", "mental illness", "mental health", "diagnosis", "depression", "depressed", "anxiety", "anxieties", "psychosis", "dissociate", "dissociation", "intrusive thoughts", "thought spiral", "sleep paralysis", "multiple personality disorder", "dissociative identity disorder", "bipolar", "bpd", "borderline personality", "schizophrenia", "schizophrenic", "ptsd", "dsm iv", "dsm 5", "eating disorder", "anorexia", "bulimia", "binge eating disorder", "manic", "autism", "hallucinations", "hallucination", "intrusive thought", "ocd", "psychoanalysis", "trigger", "panic attack", "coping mechanism", "compulsion", "antisocial personality disorder",  "self harm", "straitjacket", "mental hospital", "mental institution", "depersonalization", "obsessive compulsive", "psychiatry", "delirium", "mania", "melancholia", "monomania", "post traumatic stress"))
+```
+
+Frequency of MH words
+```{r}
+MHcount <- all_novels_wordcount %>%
+  inner_join(MH) %>%
+  group_by(doc_id) %>%
+  summarise(positionality = positionality, 
+            mh_tot = n(), mh_perc = mh_tot / tot_words) %>%
+  ungroup() %>% distinct()
+
+MHcount %>%
+  ggplot(aes(x= positionality, y=mh_perc)) +
+  geom_boxplot() +
+  labs(x = "Positionality",
+       y = "Percentage of Mental Health Terms")
+#table - USE AS TABLE REF FOR ANY I WANT TABLE FOR
+MHcount_table <- MHcount %>% 
+  select(-mh_tot) %>% 
+  arrange(desc(mh_perc))
+MHcount_table %>% kable()
+```
+
+Frequency of Derog mh words
+```{r}
+#Frequency of Derog mh words out of all mh words
+derogperc <- all_novels_wordcount %>%
+  inner_join(MH) %>%
+  group_by(doc_id) %>%
+  summarise(positionality = positionality, word = word, 
+            mh_tot = n()) %>%
+  ungroup() %>% distinct() %>%
+  inner_join(neg_mh) %>%
+  group_by(doc_id) %>%
+  summarise(positionality = positionality,
+            neg_tot = n(), neg_perc = neg_tot / mh_tot) %>%
+  distinct()
+#graph
+derogperc %>%
+  ggplot(aes(x= positionality, y= neg_perc)) +
+  geom_boxplot() +
+  labs(x = "Positionality",
+       y = "Percentage of Derogatory Terms out of Mental Health Terms")
+#table
+derog_table <- derogperc %>% 
+  arrange(desc(neg_perc))
+derog_table %>% kable()
+
+#Frequency of Derog mh words out of all words
+derogperc_allwords <- all_novels_wordcount %>%
+  inner_join(neg_mh) %>%
+  group_by(doc_id) %>%
+  summarise(positionality = positionality, 
+            neg_tot = n(), neg_perc = neg_tot / tot_words) %>%
+  ungroup() %>% distinct()
+#graph
+derogperc_allwords %>%
+  ggplot(aes(x= positionality, y=neg_perc)) +
+  geom_boxplot() +
+  labs(x = "Positionality",
+       y = "Percentage of Derogatory Terms out of all Words")
+#table
+derog_all_table <- derogperc_allwords %>% 
+  arrange(desc(neg_perc))
+derog_all_table %>% kable()
+```
+
+Ratio of derog vs non derog
+```{r}
+derog_nonderog_ratio <- all_novels_wordcount %>%
+  inner_join(MH) %>%
+  group_by(doc_id) %>%
+  summarise(positionality = positionality, word = word, 
+            mh_tot = n()) %>%
+  ungroup() %>% distinct() %>%
+  inner_join(neg_mh) %>%
+  group_by(doc_id) %>%
+  summarise(positionality = positionality,
+            neg_tot = n(), neg_perc = neg_tot / mh_tot, pos_perc = 1-neg_perc,
+            ratio = pos_perc - neg_perc) %>%
+  distinct()
+#graph
+derog_nonderog_ratio %>%
+  ggplot(aes(x= positionality, y= ratio)) +
+  geom_boxplot() +
+  labs(x = "Positionality",
+       y = "Ratio of non-derogatory (+) vs. derogatory(-) Terms")
+```
+
++- 10
+```{r}
+Tempngrams <- novels_nest %>% 
+   unnest_tokens(ngram,text,token="ngrams", n=11)
+
+target10=c("insane", "lobotomy", "hysteria", "electroshock therapy", "lunatic", "psychotic", "nuts", "crazy", "deranged", "demented", "asylum", "loony", "retarded", "retard", "freak", "madness", "hydrotherapy", "delirious", "sociopath", "sociopathic", "disturbed", "psycho", "mad", "weird", "retard", "spastic", "screw loose", "attention seeker", "attention seeking", "halfwit", "meltdown", "outcast", "nutty", "kill yourself", "kill myself", "kill herself", "kill himself", "perverted", "spaz", "strange", "twisted", "weirdo", "psychopath", "psychopathic", "institutionalized", "therapy", "therapist", "psychiatrist", "medication", "suicidal", "suicide", "mentally ill", "mental illness", "mental health", "diagnosis", "depression", "depressed", "anxiety", "anxieties", "psychosis", "dissociate", "dissociation", "intrusive thoughts", "thought spiral", "sleep paralysis", "multiple personality disorder", "dissociative identity disorder", "bipolar", "bpd", "borderline personality", "schizophrenia", "schizophrenic", "ptsd", "dsm iv", "dsm 5", "eating disorder", "anorexia", "bulimia", "binge eating disorder", "manic", "autism", "hallucinations", "hallucination", "intrusive thought", "ocd", "psychoanalysis", "trigger", "panic attack", "coping mechanism", "compulsion", "antisocial personality disorder",  "self harm", "straitjacket", "mental hospital", "mental institution", "depersonalization", "obsessive compulsive", "psychiatry", "delirium", "mania", "melancholia", "monomania", "post traumatic stress")
+
+target_ngrams <- Tempngrams %>%
+    separate(ngram, c("word1","word2","word3","word4", "word5", "word6", "word7", "word8", 
+                      "word9", "word10", "word11"), sep = " ") %>%
+    filter(word1 %in% target10 | word11 %in% target10)
+
+#sentiment
+sentiment_around_mh <-target_ngrams%>%
+  gather(ngramnumber,word, word1:word11)%>%
+ select(-"ngramnumber")%>%
+  filter(!word %in% target10) %>%
+   inner_join(get_sentiments("bing")) %>%
+  count(doc_id, positionality, sentiment)%>%
+  spread(sentiment, n, fill=0) %>%
+  mutate(sentiment = positive - negative)
+#visualization
+ggplot(data = sentiment_around_mh, aes(x = positionality, y = sentiment)) +
+  geom_boxplot() +
+  labs(y = "Sentiment Around Mental Health Terms")
+```
+
+Topic Modeling
+```{r}
+topic_modeling <- function(data_set) {
+  dtm <- data_set %>% 
+  group_by(positionality) %>% 
+  count(word) %>%
+  cast_dtm(positionality, word, n)
+  lda <- LDA(dtm, k = 2, control = list(seed = 1234))
+  topics <- tidy(lda, matrix = "beta")
+  top_terms <- topics %>%
+  group_by(topic) %>%
+  slice_max(beta, n = 10) %>% 
+  ungroup() %>%
+  arrange(topic, -beta) %>%
+  mutate(term = reorder_within(term, beta, topic)) %>%
+  ggplot(aes(beta, term, fill = factor(topic))) +
+  geom_col(show.legend = FALSE) +
+  facet_wrap(~ topic, scales = "free") +
+  scale_y_reordered()
+}
+map(novel_list, topic_modeling)
+```
+

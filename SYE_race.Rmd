@@ -1,0 +1,732 @@
+---
+title: "SYE_author"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+DATA PREP
+
+libraries
+```{r}
+library(readtext) #Needed for readtext
+library(tidyverse)
+library(tidytext) #unnest
+library(topicmodels)
+library(knitr) #tables
+library(tm) #clean
+library(ggbeeswarm) #swarm plot
+library(textstem) #lemmatize
+library(wordcloud)
+library(reshape2) #wordcloud
+library(scales) #confusion matrix
+```
+
+Import / unnest / clean
+```{r}
+#white 
+#read
+w_df <- readtext("white", cache=FALSE)
+#remove .txt
+w_df$doc_id<-gsub(".txt", "", paste(w_df$doc_id))
+#still nested for +-10
+w_nest <- w_df %>%
+  mutate(text = str_to_lower(text)) %>% 
+  mutate(positionality = "white") %>%
+  mutate(text = str_squish(text)) %>%
+  mutate(text = removeNumbers(text))
+#unnest
+w_unnest <- w_nest %>% 
+  unnest_tokens(output = "word", input = "text")
+#remove stop words and punctuation
+w <- anti_join(w_unnest, stop_words, by = c("word" = "word"), .keep_all = true)
+w <- w %>% mutate(word = removePunctuation(word))
+#lemmatization
+w_lem <- w$word %>% lemmatize_words()
+w_lem <- as.data.frame(w_lem) 
+w_lem <- w_lem %>%
+  mutate(id = row_number()) 
+w_lem_count <- w %>% mutate(id = row_number())
+w <- full_join(w_lem, w_lem_count, by = c("id" = "id"))
+w <- w %>% select(-id) %>% rename(lem = "w_lem")
+
+#black  
+#read
+b_df <- readtext("black", cache=FALSE)
+#remove .txt
+b_df$doc_id<-gsub(".txt", "", paste(b_df$doc_id))
+#still nested for +-10
+b_nest <- b_df %>%
+  mutate(text = str_to_lower(text)) %>% 
+  mutate(positionality = "black") %>%
+  mutate(text = str_squish(text)) %>%
+  mutate(text = removeNumbers(text))
+#unnest
+b_unnest <- b_nest %>% 
+  unnest_tokens(output = "word", input = "text")
+#remove stop words
+b <- anti_join(b_unnest, stop_words, by = c("word" = "word"), .keep_all = true)
+b <- b %>% mutate(word = removePunctuation(word))
+#lemmatization
+b_lem <- b$word %>% lemmatize_words()
+b_lem <- as.data.frame(b_lem) 
+b_lem <- b_lem %>%
+  mutate(id = row_number()) 
+b_lem_count <- b %>% mutate(id = row_number())
+b <- full_join(b_lem, b_lem_count, by = c("id" = "id"))
+b <- b %>% select(-id) %>% rename(lem = "b_lem")
+
+#remove unneeded
+rm(w_df, w_lem_count, b_df, b_lem_count, w_nest, b_nest)
+
+#all novels together
+all_novels <- bind_rows(w, b)
+novel_list <- list(w, b)
+novels_with_stop_list <- list(w_unnest, b_unnest)
+#wordcount
+all_novels_wordcount <- all_novels %>%
+  group_by(doc_id) %>%
+  mutate(id = row_number()) %>%
+  mutate(tot_words = n()) %>%
+  ungroup() 
+```
+
+ANALYSIS
+
+wordcount_check
+```{r}
+all_novels_wordcount_check <- all_novels %>%
+  group_by(doc_id) %>%
+  summarize(tot_words = n()) %>%
+  arrange(desc(tot_words))
+all_novels_wordcount_check %>% kable()
+
+all_novels_wordcount_check %>%
+  ggplot(aes(tot_words, doc_id)) +
+  geom_col()
+```
+
+One sentiment per book
+```{r}
+#afinn
+afinn_sent_per <- all_novels %>% 
+   inner_join(get_sentiments("afinn")) %>% 
+   group_by(doc_id, positionality) %>% 
+   summarise(sentiment = sum(value)) %>% 
+   mutate(method = "AFINN")
+#bing and nrc
+bing_and_nrc_sent_per <- bind_rows(
+  all_novels %>% 
+    inner_join(get_sentiments("bing")) %>%
+    mutate(method = "Bing et al."),
+  all_novels %>% 
+    inner_join(get_sentiments("nrc") %>% 
+                 filter(sentiment %in% c("positive", 
+                                         "negative"))
+    ) %>%
+    mutate(method = "NRC")) %>%
+  count(method, doc_id, sentiment, positionality) %>%
+  spread(sentiment, n, fill = 0) %>%
+  mutate(sentiment = positive - negative)
+
+#Swarm plot
+single_sent_graph <- bind_rows(afinn_sent_per, bing_and_nrc_sent_per)
+ggplot(data = single_sent_graph,
+       aes(x = positionality, y = sentiment, color = positionality)) +
+  geom_beeswarm(cex = 3) +
+  facet_wrap(~ method) +
+  theme(legend.position = "none") +
+   scale_colour_brewer(palette = "Accent") +
+  stat_summary(
+    geom = "point",
+    fun = "mean",
+    col = "black",
+    size = 1,
+    shape = 24,
+    fill = "black"
+  )
+```
+
+Sentiment by percentages
+```{r}
+#afinn
+afinn_perc <- all_novels_wordcount %>% 
+   inner_join(get_sentiments("afinn")) %>% 
+   group_by(doc_id, positionality, tot_words) %>% 
+   summarise(sentiment = sum(value)) %>% 
+  mutate(perc = sentiment/tot_words) %>%
+   mutate(method = "AFINN") 
+
+#bing and nrc
+bing_and_nrc_perc <- bind_rows(
+  all_novels_wordcount %>% 
+    inner_join(get_sentiments("bing")) %>%
+    mutate(method = "Bing et al."),
+  all_novels_wordcount %>% 
+    inner_join(get_sentiments("nrc") %>% 
+                 filter(sentiment %in% c("positive", 
+                                         "negative"))
+    ) %>%
+    mutate(method = "NRC")) %>%
+  count(method, doc_id, sentiment, positionality, tot_words) %>%
+  spread(sentiment, n, fill = 0) %>%
+  mutate(sentiment = positive - negative) %>%
+  mutate(perc = sentiment / tot_words)
+
+#Swarm plot
+single_perc_graph <- bind_rows(afinn_perc, bing_and_nrc_perc)
+ggplot(data = single_perc_graph,
+       aes(x = positionality, y = perc, color = positionality)) +
+  geom_beeswarm(cex = 3) +
+  facet_wrap(~ method) +
+  theme(legend.position = "none") +
+   scale_colour_brewer(palette = "Accent") +
+  stat_summary(
+    geom = "point",
+    fun = "mean",
+    col = "black",
+    size = 1,
+    shape = 24,
+    fill = "black"
+  )
+```
+
+NRC emotion percent
+```{r}
+all_novels_wordcount %>% 
+    inner_join(get_sentiments("nrc")) %>%
+  group_by(positionality) %>%
+  mutate(tot_words = sum(tot_words)) %>%
+  ungroup() %>%
+  count(sentiment, positionality, tot_words) %>%
+  mutate(perc = n/tot_words) %>%
+  ggplot(aes(x=positionality, y=perc)) +
+  facet_wrap(~sentiment) +
+  geom_col()
+```
+
+Word cloud of most common pos v neg words! by positionality
+```{r}
+#not rendering ??
+wordcloud <- function(data_set) {
+  data_set %>% 
+  inner_join(get_sentiments("bing")) %>%
+  count(word, sentiment, sort = TRUE) %>%
+  acast(word ~ sentiment, value.var = "n", fill = 0) %>%
+  comparison.cloud(colors = c("gray20", "gray80"),
+                   max.words = 100)
+}
+map(novel_list, wordcloud)
+#hot / cool - social status. love and smile most. smell ??only in bf - char smells , part of speech? worry/hang/hard/stupid/crazy
+#do spot checks of why words so common
+#use to inspire close reading 
+```
+
+Most common words
+```{r}
+#table loop
+top_10_words <- function(data_set) {
+  data_set %>% group_by(word) %>%
+    summarise(n = n()) %>%
+    arrange(desc(n)) %>%
+  print(n = 10)
+}
+map(novel_list, top_10_words)
+
+#graph loop
+top_10_words_graph <- function(data_set) {
+  data_set %>% group_by(word) %>%
+    summarise(n = n()) %>%
+    ungroup() %>%
+  slice_max(n, n=10) %>%
+  mutate(word = fct_reorder(.f = word, .x = n)) %>% 
+  ggplot(aes(n, word)) +
+  geom_col()
+}
+map(novel_list, top_10_words_graph) 
+```
+
+Most common words by percentages
+```{r}
+#graph loop
+top_10_words_graph_perc <- function(data_set) {
+  data_set %>% 
+    count(doc_id, word) %>%
+  group_by(doc_id) %>%
+  mutate(tot_words = sum(n)) %>%
+  ungroup() %>%
+  group_by(word) %>%
+    mutate(book_count = n()) %>%
+    filter(book_count>=2) %>% #tried 8 and keeps the same :)
+    mutate(freq = n / tot_words) %>%
+    group_by(word) %>%
+    summarize(tot_freq = sum(freq)) %>%
+  slice_max(tot_freq, n=10) %>%
+  mutate(word = fct_reorder(.f = word, .x = tot_freq)) %>% 
+  ggplot(aes(tot_freq, word)) +
+  geom_col()
+}
+map(novel_list, top_10_words_graph_perc) 
+```
+
+Most common Lemmatizations by percentages
+```{r}
+top_10_lems_graph <- function(data_set) {
+  data_set %>% 
+    count(doc_id, lem) %>%
+  group_by(doc_id) %>%
+  mutate(tot_words = sum(n)) %>%
+  ungroup() %>%
+  group_by(lem) %>%
+    mutate(book_count = n()) %>%
+    filter(book_count>=2) %>%
+    mutate(freq = n / tot_words) %>%
+    group_by(lem) %>%
+    summarize(tot_freq = sum(freq)) %>%
+  slice_max(tot_freq, n=10) %>%
+  mutate(lem = fct_reorder(.f = lem, .x = tot_freq)) %>% 
+  ggplot(aes(tot_freq, lem)) +
+  geom_col()
+}
+map(novel_list, top_10_lems_graph) 
+```
+
+MENTAL HEALTH
+```{r}
+MH <- tibble(word=c("insane", "lobotomy", "hysteria", "electroshock", "lunatic", "psychotic", "nuts", "crazy", "deranged", "demented", "asylum", "loony", "retarded", "retard", "freak", "madness", "hydrotherapy", "delirious", "sociopath", "sociopathic", "disturbed", "psycho", "mad", "weird", "spastic", "halfwit", "meltdown", "outcast", "nutty", "killyourself", "killmyself", "killherself", "killhimself", "perverted", "spaz", "strange", "twisted", "weirdo", "psychopath", "psychopathic", "institutionalized", "therapy", "therapist", "psychiatrist", "psychiatric", "medication", "suicidal", "suicide", "mentallyill", "mentalillness", "diagnosis", "depression", "depressed", "anxiety", "anxieties", "psychosis", "dissociate", "dissociated", "dissociation", "intrusivethought", "intrusivethoughts", "thoughtspiral", "sleepparalysis", "multiplepersonality", "splitpersonality", "dissociative", "bipolar", "bpd", "borderlinepersonality", "schizophrenia", "schizophrenic", "ptsd", "dsm", "mentaldisorder", "mentalhealth", "anorexia", "bulimia", "bingeeating", "manic", "autism", "hallucinations", "hallucination", "ocd", "psychoanalysis", "trigger", "panicattack", "panicdisorder", "coping", "compulsion", "antisocialpersonality",  "selfharm", "selfmutilation", "selfinjury", "selfharmers", "selfharmer", "straitjacket", "mentalhospital", "mentalinstitution", "depersonalization", "obsessivecompulsive", "psychiatry", "delirium", "mania", "melancholia", "monomania", "traumatic", "trauma", "cutter", "cutting", "schizo", "delusional", "alters", "shellshock", "insomnia", "neurosis", "neurotic", "delusions", "survivorsguilt", "mentalcase", "agoraphobia", "mentallychallenged", "abnormal", "mentalpatient"))
+
+neg_mh <- tibble(word=c("insane", "lobotomy", "hysteria", "electroshock", "lunatic", "psychotic", "nuts", "crazy", "deranged", "demented", "asylum", "loony", "retarded", "retard", "freak", "madness", "hydrotherapy", "delirious", "sociopath", "sociopathic", "disturbed", "psycho", "mad", "weird", "spastic", "halfwit", "meltdown", "outcast", "nutty", "killyourself", "killmyself", "killherself", "killhimself", "perverted", "spaz", "strange", "twisted", "weirdo", "psychopath", "psychopathic", "cutter", "cutting", "schizo", "delusional", "shellshock", "neurosis", "neurotic", "mentalcase", "multiplepersonality", "splitpersonality", "abnormal"))
+
+pos_mh <- tibble(word=c("institutionalized", "therapy", "therapist", "psychiatrist", "psychiatric", "medication", "suicidal", "suicide", "mentallyill", "mentalillness", "mentalhealth", "diagnosis", "depression", "depressed", "anxiety", "anxieties", "psychosis", "dissociate", "dissociated", "dissociation", "intrusivethoughts", "intrusivethought", "thoughtspiral", "sleepparalysis", "dissociative", "bipolar", "bpd", "borderlinepersonality", "schizophrenia", "schizophrenic", "ptsd", "dsm", "mentaldisorder", "anorexia", "bulimia", "bingeeating", "manic", "autism", "hallucinations", "hallucination", "ocd", "psychoanalysis", "trigger", "panicattack", "panicdisorder", "coping", "compulsion", "antisocialpersonality",  "selfharm", "selfmutilation", "selfinjury", "selfharmers", "selfharmer", "straitjacket", "mentalinstitution", "mentalhospital", "depersonalization", "obsessivecompulsive", "psychiatry", "delirium", "mania", "melancholia", "monomania", "traumatic", "trauma", "alters", "insomnia", "delusions", "survivors guilt", "agoraphobia", "mentalpatient"))
+```
+
+Fix 2 word mh terms
+```{r}
+combo <- function(data_set) { 
+  combo_df <- data_set %>%
+  mutate(next_word = lead(word)) %>%
+  ungroup() %>%
+  mutate(word =
+           case_when(word=="mentally" & next_word=="challenged" ~ "mentallychallenged",
+                     word=="kill" & next_word=="yourself" ~ "killyourself", 
+                     word=="kill" & next_word=="myself" ~ "killmyself", 
+                     word=="kill" & next_word=="herself" ~ "killherself", 
+                     word=="kill" & next_word=="himself" ~ "killhimself",
+                     word=="multiple" & next_word=="personality" ~ "multiplepersonality",
+                     word=="mentally" & next_word=="ill" ~ "mentallyill",
+                     word=="mental" & next_word=="illness" ~ "mentalillness",
+                     word=="intrusive" & next_word=="thoughts" ~ "intrusivethoughts",
+                     word=="intrusive" & next_word=="thought" ~ "intrusivethought",
+                     word=="thought" & next_word=="spiral" ~ "thoughtspiral",
+                     word=="multiple" & next_word=="personality" ~ "multiplepersonality",
+                     word=="split" & next_word=="personality" ~ "splitpersonality",
+                     word=="borderline" & next_word=="personality" ~ "borderlinepersonality",
+                     word=="binge" & next_word=="eating" ~ "bingeeating",
+                     word=="self" & next_word=="harm" ~ "selfharm",
+                     word=="self" & next_word=="mutilation" ~ "selfmutilation",
+                     word=="self" & next_word=="injury" ~ "selfinjury",
+                     word=="self" & next_word=="harmers" ~ "selfharmers",
+                     word=="self" & next_word=="harmer" ~ "selfharmer",
+                     word=="mental" & next_word=="hospital" ~ "mentalhospital",
+                     word=="mental" & next_word=="institution" ~ "mentalinstitution",
+                     word=="obsessive" & next_word=="compulsive" ~ "obsessivecompulsive", 
+                     word=="shell" & next_word=="shock" ~ "shellshock",
+                     word=="survivors" & next_word=="guilt" ~ "survivorsguilt",
+                     word=="mental" & next_word=="case" ~ "mentalcase",
+                     word=="sleep" & next_word=="paralysis" ~ "sleepparalysis",
+                     word=="panic" & next_word=="attack" ~ "panicattack",
+                     word=="panic" & next_word=="disorder" ~ "panicdisorder",
+                     word=="antisocial" & next_word=="personality" ~ "antisocialpersonality",
+                     word=="mental" & next_word=="patient" ~ "mentalpatient",
+                     TRUE ~ word)) %>% #remove next word
+    select(!next_word)
+  #remove stop words
+  combo_df <- anti_join(combo_df, stop_words, by = c("word" = "word"), .keep_all = true)
+  combo_df <- combo_df %>% mutate(word = removePunctuation(word)) %>%
+    group_by(doc_id) %>%
+    mutate(id = row_number()) %>%
+    mutate(tot_words = n()) %>%
+    ungroup()
+}
+combo_list <- map(novels_with_stop_list, combo)
+combo <- bind_rows(combo_list)
+
+#combo with stop for 10+-
+combo_with_stop <- function(data_set) { 
+  combo_df <- data_set %>%
+  mutate(next_word = lead(word)) %>%
+  ungroup() %>%
+  mutate(word =
+           case_when(word=="mentally" & next_word=="challenged" ~ "mentallychallenged",
+                     word=="kill" & next_word=="yourself" ~ "killyourself", 
+                     word=="kill" & next_word=="myself" ~ "killmyself", 
+                     word=="kill" & next_word=="herself" ~ "killherself", 
+                     word=="kill" & next_word=="himself" ~ "killhimself",
+                     word=="multiple" & next_word=="personality" ~ "multiplepersonality",
+                     word=="mentally" & next_word=="ill" ~ "mentallyill",
+                     word=="mental" & next_word=="illness" ~ "mentalillness",
+                     word=="intrusive" & next_word=="thoughts" ~ "intrusivethoughts",
+                     word=="intrusive" & next_word=="thought" ~ "intrusivethought",
+                     word=="thought" & next_word=="spiral" ~ "thoughtspiral",
+                     word=="multiple" & next_word=="personality" ~ "multiplepersonality",
+                     word=="split" & next_word=="personality" ~ "splitpersonality",
+                     word=="borderline" & next_word=="personality" ~ "borderlinepersonality",
+                     word=="binge" & next_word=="eating" ~ "bingeeating",
+                     word=="self" & next_word=="harm" ~ "selfharm",
+                     word=="self" & next_word=="mutilation" ~ "selfmutilation",
+                     word=="self" & next_word=="injury" ~ "selfinjury",
+                     word=="self" & next_word=="harmers" ~ "selfharmers",
+                     word=="self" & next_word=="harmer" ~ "selfharmer",
+                     word=="mental" & next_word=="hospital" ~ "mentalhospital",
+                     word=="mental" & next_word=="institution" ~ "mentalinstitution",
+                     word=="obsessive" & next_word=="compulsive" ~ "obsessivecompulsive", 
+                     word=="shell" & next_word=="shock" ~ "shellshock",
+                     word=="survivors" & next_word=="guilt" ~ "survivorsguilt",
+                     word=="mental" & next_word=="case" ~ "mentalcase",
+                     word=="sleep" & next_word=="paralysis" ~ "sleepparalysis",
+                     word=="panic" & next_word=="attack" ~ "panicattack",
+                     word=="panic" & next_word=="disorder" ~ "panicdisorder",
+                     word=="antisocial" & next_word=="personality" ~ "antisocialpersonality",
+                     word=="mental" & next_word=="patient" ~ "mentalpatient",
+                     TRUE ~ word)) %>% #remove next word
+    select(!next_word)
+  #remove punctuation
+  combo_df <- combo_df %>% mutate(word = removePunctuation(word))
+}
+combo_with_stop_list <- map(novels_with_stop_list, combo_with_stop)
+combo_with_stop <- bind_rows(combo_with_stop_list)
+```
+
+Frequency of MH words
+```{r}
+MHcount <- combo %>%
+  inner_join(MH) %>%
+  group_by(doc_id) %>%
+  summarise(positionality = positionality, 
+            mh_tot = n(), mh_perc = mh_tot / tot_words) %>%
+  ungroup() %>% distinct()
+
+MHcount %>%
+  ggplot(aes(x= positionality, y=mh_perc, color = positionality)) +
+  geom_beeswarm(cex = 3) +
+  labs(x = "Positionality",
+       y = "Percentage of Mental Health Terms") + 
+  theme(legend.position = "none") +
+  scale_colour_brewer(palette = "Accent") +
+  stat_summary(
+    geom = "point",
+    fun = "mean",
+    col = "black",
+    size = 1,
+    shape = 24,
+    fill = "black"
+  )
+
+#table - USE AS TABLE REF FOR ANY I WANT TABLE FOR
+MHcount_table <- MHcount %>% 
+  arrange(desc(mh_perc))
+MHcount_table %>% kable()
+```
+
+mh words
+```{r}
+top_10_mh <- function(data_set) {
+  data_set  %>%
+  inner_join(MH) %>% 
+    group_by(word) %>%
+    summarise(n = n()) %>%
+    ungroup() %>%
+  slice_max(n, n=10) %>%
+  mutate(word = fct_reorder(.f = word, .x = n)) %>% 
+  ggplot(aes(n, word)) +
+  geom_col()
+}
+map(combo_list, top_10_mh)
+```
+
+Most common MH words by percentages
+cant work
+```{r}
+#graph loop
+top_10_mh_perc <- function(data_set) {
+  data_set %>%
+   count(doc_id, word) %>%
+  group_by(doc_id) %>%
+  mutate(tot_words = sum(n)) %>%
+  ungroup() %>%
+  group_by(word) %>%
+    mutate(book_count = n()) %>%
+     ungroup() %>%
+    filter(book_count>=2) %>%
+  inner_join(MH) %>%
+    mutate(freq = n / tot_words) %>%
+    group_by(word) %>%
+    summarize(tot_freq = sum(freq)) %>%
+  slice_max(tot_freq, n=10) %>%
+  mutate(word = fct_reorder(.f = word, .x = tot_freq)) %>%
+  ggplot(aes(tot_freq, word)) +
+  geom_col()
+}
+map(combo_list, top_10_mh_perc)
+```
+
+Frequency of Derog mh words
+```{r}
+#Frequency of Derog mh words out of all mh words
+derogperc <- combo %>%
+  inner_join(MH) %>%
+  group_by(doc_id) %>%
+  summarise(positionality = positionality, word = word, 
+            mh_tot = n()) %>%
+  ungroup() %>% distinct() %>%
+  inner_join(neg_mh) %>%
+  group_by(doc_id) %>%
+  summarise(positionality = positionality,
+            neg_tot = n(), neg_perc = neg_tot / mh_tot) %>%
+  distinct()
+#graph
+derogperc %>%
+  ggplot(aes(x= positionality, y= neg_perc, color = positionality)) +
+  geom_beeswarm(cex = 3) +
+  labs(x = "Positionality",
+       y = "Percentage of Derogatory Terms out of Mental Health Terms") + 
+  theme(legend.position = "none") +
+  scale_colour_brewer(palette = "Accent") +
+  stat_summary(
+    geom = "point",
+    fun = "mean",
+    col = "black",
+    size = 1,
+    shape = 24,
+    fill = "black"
+  )
+#table
+derog_table <- derogperc %>% 
+  arrange(desc(neg_perc))
+derog_table %>% kable()
+
+#Frequency of Derog mh words out of all words
+derogperc_allwords <- combo %>%
+  inner_join(neg_mh) %>%
+  group_by(doc_id) %>%
+  summarise(positionality = positionality, 
+            neg_tot = n(), neg_perc = neg_tot / tot_words) %>%
+  ungroup() %>% distinct()
+#graph
+derogperc_allwords %>%
+  ggplot(aes(x= positionality, y=neg_perc, color = positionality)) +
+  geom_beeswarm(cex = 3) +
+  labs(x = "Positionality",
+       y = "Percentage of Derogatory Terms out of all Words") + 
+  theme(legend.position = "none") +
+  scale_colour_brewer(palette = "Accent") +
+  stat_summary(
+    geom = "point",
+    fun = "mean",
+    col = "black",
+    size = 1,
+    shape = 24,
+    fill = "black"
+  )
+#table
+derog_all_table <- derogperc_allwords %>% 
+  arrange(desc(neg_perc))
+derog_all_table %>% kable()
+```
+
+Ratio of derog vs non derog
+```{r}
+derog_nonderog_ratio <- combo %>%
+  inner_join(MH) %>%
+  group_by(doc_id) %>%
+  summarise(positionality = positionality, word = word, 
+            mh_tot = n()) %>%
+  ungroup() %>% distinct() %>%
+  inner_join(neg_mh) %>%
+  group_by(doc_id) %>%
+  summarise(positionality = positionality,
+            neg_tot = n(), neg_perc = neg_tot / mh_tot, pos_perc = 1-neg_perc,
+            ratio = pos_perc - neg_perc) %>%
+  distinct()
+#graph
+derog_nonderog_ratio %>%
+  ggplot(aes(x= positionality, y= ratio, color = positionality)) +
+  geom_beeswarm(cex = 3) +
+  labs(x = "Positionality",
+       y = "Ratio of non-derogatory (+) vs. derogatory(-) Terms") + 
+  theme(legend.position = "none") +
+  scale_colour_brewer(palette = "Accent") +
+  stat_summary(
+    geom = "point",
+    fun = "mean",
+    col = "black",
+    size = 1,
+    shape = 24,
+    fill = "black"
+  )
+```
+
++- 10
+```{r}
+target10=c("insane", "lobotomy", "hysteria", "electroshock", "lunatic", "psychotic", "nuts", "crazy", "deranged", "demented", "asylum", "loony", "retarded", "retard", "freak", "madness", "hydrotherapy", "delirious", "sociopath", "sociopathic", "disturbed", "psycho", "mad", "weird", "spastic", "halfwit", "meltdown", "outcast", "nutty", "killyourself", "killmyself", "killherself", "killhimself", "perverted", "spaz", "strange", "twisted", "weirdo", "psychopath", "psychopathic", "institutionalized", "therapy", "therapist", "psychiatrist", "psychiatric", "medication", "suicidal", "suicide", "mentallyill", "mentalillness", "diagnosis", "depression", "depressed", "anxiety", "anxieties", "psychosis", "dissociate", "dissociated", "dissociation", "intrusivethought", "intrusivethoughts", "thoughtspiral", "sleepparalysis", "multiplepersonality", "splitpersonality", "dissociative", "bipolar", "bpd", "borderlinepersonality", "schizophrenia", "schizophrenic", "ptsd", "dsm", "mentaldisorder", "mentalhealth", "anorexia", "bulimia", "bingeeating", "manic", "autism", "hallucinations", "hallucination", "ocd", "psychoanalysis", "trigger", "panicattack", "panicdisorder", "coping", "compulsion", "antisocialpersonality",  "selfharm", "selfmutilation", "selfinjury", "selfharmers", "selfharmer", "straitjacket", "mentalhospital", "mentalinstitution", "depersonalization", "obsessivecompulsive", "psychiatry", "delirium", "mania", "melancholia", "monomania", "traumatic", "trauma", "cutter", "cutting", "schizo", "delusional", "alters", "shellshock", "insomnia", "neurosis", "neurotic", "delusions", "survivorsguilt", "mentalcase", "agoraphobia", "mentallychallenged", "abnormal", "mentalpatient")
+
+#doc names and count
+docs = unique(combo_with_stop$doc_id)
+ndoc = length(unique(combo_with_stop$doc_id))
+#for loop for 10 words around csvs
+for (i in 1:ndoc){
+  #full data
+  test <- combo_with_stop %>%
+  #subset data set into current doc
+    filter(doc_id == docs[i]) %>%
+  #build 10 word lead/lag
+    mutate(ten_words = case_when(word %in% target10 ~ paste(
+      lag(word, 10), lag(word, 9),lag(word, 8), lag(word, 7), lag(word, 6), lag(word, 5), lag(word, 4), lag(word, 3), lag(word, 2), lag(word), 
+      lead(word), lead(word, 2), lead(word, 3), lead(word, 4), lead(word, 5), lead(word, 6), lead(word, 7), lead(word, 8), lead(word, 9), lead(word, 10)))) %>%
+    drop_na(ten_words)
+  #save to file
+  filename = paste("10_words/", docs[i], "_10_words.csv", sep = "")
+  write_csv(x = test, file = filename)
+}
+
+#sentiment
+sentiment_around_mh <- readtext("10_words", cache=FALSE) %>%
+  select(!doc_id) %>%
+  rename(doc_id = "text") %>% 
+  select(!word) %>%
+  unnest_tokens(output = "word", input = "ten_words") %>%
+   inner_join(get_sentiments("bing")) %>%
+  count(doc_id, positionality, sentiment) %>%
+  spread(sentiment, n, fill=0) %>%
+  mutate(sentiment = positive - negative)
+
+#visualization
+ggplot(data = sentiment_around_mh, aes(x = positionality, y = sentiment, color = positionality)) +
+  geom_beeswarm(cex = 3) +
+  labs(y = "Sentiment Around Mental Health Terms") + 
+  theme(legend.position = "none") +
+  scale_colour_brewer(palette = "Accent") +
+  stat_summary(
+    geom = "point",
+    fun = "mean",
+    col = "black",
+    size = 1,
+    shape = 24,
+    fill = "black"
+  )
+```
+
+Topic Modeling
+```{r}
+topic_modeling <- function(data_set) {
+  dtm <- data_set %>% 
+  count(positionality, word) %>%
+  cast_dtm(positionality, word, n)
+  lda <- LDA(dtm, k = 2, control = list(seed = 1234))
+  topics <- tidy(lda, matrix = "beta")
+  top_terms <- topics %>%
+  group_by(topic) %>%
+  slice_max(beta, n = 10) %>% 
+  ungroup() %>%
+  arrange(topic, -beta) %>%
+  mutate(term = reorder_within(term, beta, topic)) %>%
+  ggplot(aes(beta, term, fill = factor(topic))) +
+  geom_col(show.legend = FALSE) +
+  facet_wrap(~ topic, scales = "free") +
+  scale_y_reordered()
+}
+map(novel_list, topic_modeling)
+```
+
+Classifying by topic
+```{r}
+#have positionality in name of doc  
+named <- all_novels %>%
+  unite("doc_id", c(doc_id, positionality),
+        sep = "_")
+#dtm and lda
+dtm <- named %>% 
+  count(doc_id, word) %>%
+  cast_dtm(doc_id, word, n)
+lda <- LDA(dtm, k = 4, control = list(seed = 1234))
+#probability of words being in each topic (aka positionality)
+topics <- tidy(lda, matrix = "beta")
+#top terms per topic
+topics %>%
+  group_by(topic) %>%
+  slice_max(beta, n = 5) %>% 
+  ungroup() %>%
+  arrange(topic, -beta) %>%
+  mutate(term = reorder_within(term, beta, topic)) %>%
+  ggplot(aes(beta, term, fill = factor(topic))) +
+  geom_col(show.legend = FALSE) +
+  facet_wrap(~ topic, scales = "free") +
+  scale_y_reordered()
+# per-document-per-topic probabilities & graph
+gamma <- tidy(lda, matrix = "gamma") %>% 
+  separate(document, c("doc_id", "positionality"), sep = "_", convert = TRUE) %>%
+  mutate(doc_id = reorder(doc_id, gamma * topic))
+  
+gamma %>% ggplot(aes(factor(topic), gamma, colour=as.factor(topic))) +
+  geom_point() +
+  facet_wrap(~ positionality) +
+  labs(x = "topic", y = expression(gamma)) +
+  theme(legend.position = "none") +
+   scale_colour_brewer(palette = "Accent")
+```
+
+Distribution of Classification
+```{r}
+classifications <- gamma %>%
+  group_by(positionality, doc_id) %>%
+  slice_max(gamma) %>%
+  ungroup()
+
+topics_attributed <- classifications %>%
+  count(positionality, topic) %>%
+  group_by(positionality) %>%
+  slice_max(n, n = 1) %>% 
+  ungroup() %>%
+  transmute(consensus = positionality, topic)
+
+wrong_classification <- classifications %>%
+  inner_join(topics_attributed, by = "topic") %>%
+  filter(positionality != consensus)
+
+word_assignments <- augment(lda, data = dtm) %>%
+  separate(document, c("doc_id", "positionality"), 
+           sep = "_", convert = TRUE) %>%
+  inner_join(topics_attributed, by = c(".topic" = "topic"))
+
+by_doc_id <- classifications %>%
+   inner_join(topics_attributed, by = c("topic" = "topic"))
+
+#confusion matrix
+by_doc_id %>%
+  count(positionality, consensus) %>%
+  mutate(across(c(positionality, consensus), ~str_wrap(., 20))) %>%
+  group_by(positionality) %>%
+  mutate(percent = n / sum(n)) %>%
+  ggplot(aes(consensus, positionality, fill = percent)) +
+  geom_tile() +
+  scale_fill_gradient2(high = "steelblue4", label = percent_format()) +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1),
+        panel.grid = element_blank()) +
+  labs(x = "Positionality books were assigned to",
+       y = "Positionality books came from",
+       fill = "% of assignments")
+```
+
+
+Inverse document freq
+# ```{r}
+# cleaned_text <- raw_text %>%
+#   group_by(newsgroup, id) %>%
+#   filter(cumsum(text == "") > 0,
+#          cumsum(str_detect(text, "^--")) == 0) %>%
+#   ungroup()
+# ```
+
